@@ -19,54 +19,64 @@
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-  const map = L.map('map').setView([37.5665, 126.9780], 13);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap'
-  }).addTo(map);
+// Cloud Run의 프록시 URL (반드시 변경!)
+const PROXY_URL = "https://gas-proxy-1018660757410.asia-northeast3.run.app";
 
-  if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(async pos => {
-      const lat = pos.coords.latitude;
-      const lng = pos.coords.longitude;
-      map.setView([lat, lng], 14);
-      L.marker([lat, lng]).addTo(map).bindPopup("내 위치").openPopup();
+// Leaflet 지도 초기화
+const map = L.map('map').setView([37.5665, 126.9780], 13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap'
+}).addTo(map);
 
-      // Flask 서버 프록시 호출
-      const proxyURL = `/google-places-proxy?lat=${lat}&lng=${lng}&radius=5000&type=gas_station`;
+// 유저 GPS 위치 얻기
+navigator.geolocation.getCurrentPosition(async pos => {
+  const lat = pos.coords.latitude;
+  const lng = pos.coords.longitude;
 
-      try {
-        const res = await fetch(proxyURL);
-        const data = await res.json();
+  // 현재 위치 지도에 표시
+  map.setView([lat, lng], 14);
+  L.marker([lat, lng]).addTo(map).bindPopup("현재 내 위치").openPopup();
 
-        const listDiv = document.getElementById('list');
-        listDiv.innerHTML = ""; // 초기화
+  // Cloud Run으로 Places API 요청
+  const url = `${PROXY_URL}?lat=${lat}&lng=${lng}&radius=5000`;
+  console.log("요청 URL:", url);
 
-        data.results.forEach(place => {
-          // 지도 마커
-          const marker = L.marker([place.geometry.location.lat, place.geometry.location.lng]).addTo(map);
-          marker.bindPopup(`<strong>${place.name}</strong><br>주소: ${place.vicinity}`);
-
-          // 리스트뷰
-          const item = document.createElement('div');
-          item.className = 'station-item';
-          item.innerHTML = `<strong>${place.name}</strong> - ${place.vicinity}`;
-          item.onclick = () => { 
-            map.panTo([place.geometry.location.lat, place.geometry.location.lng]); 
-            marker.openPopup(); 
-          };
-          listDiv.appendChild(item);
-        });
-
-      } catch (err) {
-        console.error("Google Places API 호출 실패:", err);
-        alert("주변 주유소 정보를 가져오지 못했습니다.");
-      }
-    }, err => {
-      alert("위치 정보를 가져오지 못했습니다: " + err.message);
-    });
-  } else {
-    alert("브라우저에서 위치 정보 사용이 불가합니다.");
+  let placesData;
+  try {
+    placesData = await fetch(url).then(res => res.json());
+  } catch (e) {
+    alert("주유소 데이터를 불러오지 못했습니다.");
+    console.error(e);
+    return;
   }
+
+  const results = placesData.results || [];
+  const listDiv = document.getElementById('list');
+
+  results.forEach(place => {
+    const { lat, lng } = place.geometry.location;
+
+    // 지도 마커 표시
+    const marker = L.marker([lat, lng]).addTo(map);
+    marker.bindPopup(`
+      <strong>${place.name}</strong><br>
+      주소: ${place.vicinity || '정보 없음'}
+    `);
+
+    // 리스트 항목 생성
+    const item = document.createElement('div');
+    item.className = 'station-item';
+    item.innerHTML = `<strong>${place.name}</strong> - ${place.vicinity || '주소 없음'}`;
+    item.onclick = () => {
+      map.panTo([lat, lng]);
+      marker.openPopup();
+    };
+    listDiv.appendChild(item);
+  });
+
+}, err => {
+  alert("GPS 위치 정보를 가져올 수 없습니다: " + err.message);
+});
 </script>
 
 </body>
