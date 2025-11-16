@@ -10,7 +10,6 @@
   #map { height: 70vh; width: 100%; }
   #list { height: 30vh; overflow-y: auto; padding: 10px; }
   .station-item { margin-bottom: 8px; cursor: pointer; }
-  .popup-input { width: 80px; margin-right: 5px; }
 </style>
 </head>
 <body>
@@ -20,21 +19,28 @@
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
+// Cloud Run의 프록시 URL (반드시 변경!)
 const PROXY_URL = "https://gas-proxy-1018660757410.asia-northeast3.run.app/places";
 
+// Leaflet 지도 초기화
 const map = L.map('map').setView([37.5665, 126.9780], 13);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '© OpenStreetMap'
 }).addTo(map);
 
+// 유저 GPS 위치 얻기
 navigator.geolocation.getCurrentPosition(async pos => {
   const lat = pos.coords.latitude;
   const lng = pos.coords.longitude;
 
+  // 현재 위치 지도에 표시
   map.setView([lat, lng], 14);
   L.marker([lat, lng]).addTo(map).bindPopup("현재 내 위치").openPopup();
 
-  const url = `${API_URL}/places?lat=${lat}&lng=${lng}&radius=5000`;
+  // Cloud Run으로 Places API 요청
+  const url = `${PROXY_URL}?lat=${lat}&lng=${lng}&radius=5000`;
+  console.log("요청 URL:", url);
+
   let placesData;
   try {
     placesData = await fetch(url).then(res => res.json());
@@ -49,42 +55,13 @@ navigator.geolocation.getCurrentPosition(async pos => {
 
   results.forEach(place => {
     const { lat, lng } = place.geometry.location;
+
+    // 지도 마커 표시
     const marker = L.marker([lat, lng]).addTo(map);
-
-    async function updatePopup() {
-      try {
-        const res = await fetch(`${API_URL}/getPrice/${encodeURIComponent(place.name)}`);
-        const data = await res.json();
-        let content = `
-          <strong>${place.name}</strong><br>
-          주소: ${place.vicinity || '정보 없음'}<br>
-          가격: ${data.price !== null ? `$${data.price}` : '정보 없음'}<br>
-          <input type="number" id="priceInput" class="popup-input" placeholder="가격 입력">
-          <button id="saveBtn">저장</button>
-        `;
-        marker.bindPopup(content);
-
-        marker.on('popupopen', () => {
-          document.getElementById('saveBtn').onclick = async () => {
-            const price = parseFloat(document.getElementById('priceInput').value);
-            if (!isNaN(price)) {
-              await fetch(`${API_URL}/savePrice`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ station_name: place.name, price })
-              });
-              await updatePopup(); // 팝업 갱신
-              marker.closePopup();
-              marker.openPopup();
-            } else {
-              alert("올바른 가격을 입력하세요.");
-            }
-          };
-        });
-      } catch (err) {
-        console.error(err);
-      }
-    }
+    marker.bindPopup(`
+      <strong>${place.name}</strong><br>
+      주소: ${place.vicinity || '정보 없음'}
+    `);
 
     // 리스트 항목 생성
     const item = document.createElement('div');
@@ -92,11 +69,9 @@ navigator.geolocation.getCurrentPosition(async pos => {
     item.innerHTML = `<strong>${place.name}</strong> - ${place.vicinity || '주소 없음'}`;
     item.onclick = () => {
       map.panTo([lat, lng]);
-      updatePopup().then(() => marker.openPopup());
+      marker.openPopup();
     };
     listDiv.appendChild(item);
-
-    updatePopup(); // 초기 팝업 업데이트
   });
 
 }, err => {
