@@ -20,7 +20,7 @@
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-// Cloud Run의 프록시 URL (반드시 변경!)
+// 항상 PROXY_URL 설정
 const PROXY_URL = "https://gas-proxy-1018660757410.asia-northeast3.run.app/places";
 
 const map = L.map('map').setView([37.5665, 126.9780], 13);
@@ -35,8 +35,8 @@ navigator.geolocation.getCurrentPosition(async pos => {
   map.setView([lat, lng], 14);
   L.marker([lat, lng]).addTo(map).bindPopup("현재 내 위치").openPopup();
 
-  // 주변 주유소 요청
-  const url = `${PROXY_URL}/places?lat=${lat}&lng=${lng}&radius=5000`;
+  // 주유소 정보 요청
+  const url = `${PROXY_URL}?lat=${lat}&lng=${lng}&radius=5000`;
   let placesData;
   try {
     placesData = await fetch(url).then(res => res.json());
@@ -52,18 +52,52 @@ navigator.geolocation.getCurrentPosition(async pos => {
   results.forEach(place => {
     const { lat, lng } = place.geometry.location;
 
-    // 지도 마커 표시
     const marker = L.marker([lat, lng]).addTo(map);
 
-    marker.bindPopup(`
-      <strong>${place.name}</strong><br>
-      주소: ${place.vicinity || '정보 없음'}
-    `);
-    
+    // 팝업 업데이트
+    async function updatePopup() {
+      try {
+        const res = await fetch(`${PROXY_URL}/getPrice/${encodeURIComponent(place.name)}`);
+        const data = await res.json();
+
+        const popupContent = `
+          <strong>${place.name}</strong><br>
+          주소: ${place.vicinity || '정보 없음'}<br>
+          가격: ${data.price !== null ? `$${data.price}` : '정보 없음'}<br>
+          저장 시간: ${data.timestamp ? new Date(data.timestamp).toLocaleString() : '-'}<br>
+          <input type="number" id="priceInput" class="popup-input" placeholder="가격 입력">
+          <button id="saveBtn">저장</button>
+        `;
+        marker.bindPopup(popupContent);
+
+        marker.on('popupopen', () => {
+          const saveBtn = document.getElementById('saveBtn');
+          if (saveBtn) {
+            saveBtn.onclick = async () => {
+              const priceInput = parseFloat(document.getElementById('priceInput').value);
+              if (!isNaN(priceInput)) {
+                await fetch(`${PROXY_URL}/savePrice`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ station_name: place.name, price: priceInput })
+                });
+                await updatePopup(); // 팝업 갱신
+                marker.closePopup();
+                marker.openPopup();
+              } else {
+                alert("올바른 가격을 입력하세요.");
+              }
+            };
+          }
+        });
+      } catch (err) {
+        console.error(err);
+      }
+    }
 
     marker.on('click', () => updatePopup());
 
-    // 리스트 항목 생성
+    // 리스트 항목
     const item = document.createElement('div');
     item.className = 'station-item';
     item.innerHTML = `<strong>${place.name}</strong> - ${place.vicinity || '주소 없음'}`;
