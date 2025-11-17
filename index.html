@@ -60,46 +60,6 @@ navigator.geolocation.getCurrentPosition(async pos => {
       주소: ${place.vicinity || '정보 없음'}
     `);
     
-    // 팝업 업데이트 함수 (가격/시간 포함)
-    async function updatePopup() {
-      try {
-        const res = await fetch(`${PROXY_URL}/getPrice/${encodeURIComponent(place.name)}`);
-        const data = await res.json();
-
-        const popupContent = `
-          <strong>${place.name}</strong><br>
-          주소: ${place.vicinity || '정보 없음'}<br>
-          가격: ${data.price !== null ? `$${data.price}` : '정보 없음'}<br>
-          저장 시간: ${data.timestamp ? new Date(data.timestamp).toLocaleString() : '-'}<br>
-          <input type="number" id="priceInput" class="popup-input" placeholder="가격 입력">
-          <button id="saveBtn">저장</button>
-        `;
-        marker.bindPopup(popupContent);
-
-        marker.on('popupopen', () => {
-          const saveBtn = document.getElementById('saveBtn');
-          if (saveBtn) {
-            saveBtn.onclick = async () => {
-              const priceInput = parseFloat(document.getElementById('priceInput').value);
-              if (!isNaN(priceInput)) {
-                await fetch(`${PROXY_URL}/savePrice`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ station_name: place.name, price: priceInput })
-                });
-                await updatePopup(); // 팝업 갱신
-                marker.closePopup();
-                marker.openPopup();
-              } else {
-                alert("올바른 가격을 입력하세요.");
-              }
-            };
-          }
-        });
-      } catch (err) {
-        console.error(err);
-      }
-    }
 
     marker.on('click', () => updatePopup());
 
