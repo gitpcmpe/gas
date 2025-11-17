@@ -55,6 +55,11 @@ navigator.geolocation.getCurrentPosition(async pos => {
     // 지도 마커 표시
     const marker = L.marker([lat, lng]).addTo(map);
 
+    marker.bindPopup(`
+      <strong>${place.name}</strong><br>
+      주소: ${place.vicinity || '정보 없음'}
+    `);
+    
     // 팝업 업데이트 함수 (가격/시간 포함)
     async function updatePopup() {
       try {
