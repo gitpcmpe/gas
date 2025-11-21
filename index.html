@@ -3,264 +3,246 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>주변 주유소 안내 (드로잉 검색)</title>
+<title>주변 주유소/맛집/카페 안내</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
 <style>
-  body { margin: 0; padding: 0; font-family: Arial; }
-  #map { height: 70vh; width: 100%; }
-  #list { height: 30vh; overflow-y: auto; padding: 10px; }
-  .station-item { margin-bottom: 8px; cursor: pointer; }
-  .popup-input { width: 80px; margin-right: 5px; }
-  #controls { position: absolute; top: 10px; left: 10px; z-index: 1000; }
-  #toggleDraw { padding: 8px 12px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
-  #toggleDraw.active { background-color: #dc3545; }
+    body { margin: 0; padding: 0; font-family: Arial; }
+    #map { height: 70vh; width: 100%; }
+    #list { height: 30vh; overflow-y: auto; padding: 10px; }
+    .station-item { margin-bottom: 8px; cursor: pointer; }
+    .popup-input { width: 80px; margin-right: 5px; }
+
+    /* 추가된 스타일: 'C'와 'R' 버튼 스타일 */
+    .custom-control {
+        background: white;
+        padding: 5px;
+        border-radius: 4px;
+        box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+        display: flex; /* 버튼을 가로로 정렬 */
+    }
+    .place-button {
+        width: 30px;
+        height: 30px;
+        margin: 0 3px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background-color: #f8f8f8;
+        cursor: pointer;
+        font-weight: bold;
+        line-height: 30px;
+        text-align: center;
+        transition: background-color 0.2s;
+    }
+    .place-button:hover {
+        background-color: #e0e0e0;
+    }
 </style>
 </head>
 <body>
 
 <div id="map"></div>
-<div id="controls">
-  <button id="toggleDraw">🔎 영역 지정 모드</button>
-</div>
 <div id="list"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-// 항상 PROXY_URL은 서버 루트로 설정 (끝에 /places 붙이지 않음)
-const PROXY_URL = "https://gas-proxy-1018660757410.asia-northeast3.run.app";
+    // 항상 PROXY_URL은 서버 루트로 설정 (끝에 /places 붙이지 않음)
+    const PROXY_URL = "https://gas-proxy-1018660757410.asia-northeast3.run.app";
 
-const map = L.map('map', {
-  // 드로잉 모드 시작 시 맵 드래그 방지를 위해 기본적으로 비활성화 해제
-  dragging: true 
-}).setView([37.5665, 126.9780], 13);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '© OpenStreetMap'
-}).addTo(map);
+    const map = L.map('map').setView([37.5665, 126.9780], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap'
+    }).addTo(map);
 
-let markers = L.layerGroup().addTo(map); // 마커 그룹
-let currentCircle = null; // 현재 그려진 원
+    // **********************************************
+    // 새롭게 추가된 부분: 마커 그룹 및 위치 변수
+    // **********************************************
+    let currentLat = 37.5665; // 기본값
+    let currentLng = 126.9780; // 기본값
+    let placeMarkers = L.layerGroup().addTo(map); // Cafe/Restaurant 마커 그룹
 
-let isDrawingMode = false;
-let startLatLng = null; // 터치 시작점
+    // **********************************************
+    // 1. 사용자 정의 컨트롤(C, R 버튼) 추가
+    // **********************************************
+    const CustomPlaceControl = L.Control.extend({
+        options: {
+            position: 'topleft' // 지도 왼쪽 상단
+        },
 
-const toggleDrawBtn = document.getElementById('toggleDraw');
+        onAdd: function (map) {
+            const container = L.DomUtil.create('div', 'leaflet-bar custom-control');
+            L.DomEvent.disableClickPropagation(container); // 이벤트 전파 방지
 
-// --- 주유소 데이터 로드 및 표시 함수 ---
-async function loadAndDisplayGasStations(lat, lng, radius) {
-  // 기존 마커와 원 제거
-  markers.clearLayers();
-  if (currentCircle) {
-    map.removeLayer(currentCircle);
-    currentCircle = null;
-  }
+            // Cafe 버튼
+            const cafeBtn = L.DomUtil.create('div', 'place-button', container);
+            cafeBtn.innerHTML = 'C';
+            cafeBtn.title = '주변 카페 검색';
+            L.DomEvent.on(cafeBtn, 'click', (e) => {
+                L.DomEvent.stop(e);
+                searchNearbyPlaces('cafe');
+            });
 
-  const listDiv = document.getElementById('list');
-  listDiv.innerHTML = '주유소 검색 중...';
+            // Restaurant 버튼
+            const restBtn = L.DomUtil.create('div', 'place-button', container);
+            restBtn.innerHTML = 'R';
+            restBtn.title = '주변 레스토랑 검색';
+            L.DomEvent.on(restBtn, 'click', (e) => {
+                L.DomEvent.stop(e);
+                searchNearbyPlaces('restaurant');
+            });
 
-  // API 요청
-  const url = `${PROXY_URL}/places?lat=${lat}&lng=${lng}&radius=${radius}`;
-  let placesData;
-  try {
-    placesData = await fetch(url).then(res => res.json());
-  } catch (e) {
-    alert("주유소 데이터를 불러오지 못했습니다.");
-    console.error(e);
-    listDiv.innerHTML = '데이터 로드 실패.';
-    return;
-  }
+            return container;
+        }
+    });
 
-  const results = placesData.results || [];
-  listDiv.innerHTML = ''; // 리스트 초기화
+    map.addControl(new CustomPlaceControl());
 
-  if (results.length === 0) {
-    listDiv.innerHTML = '지정된 영역에 주유소가 없습니다.';
-    return;
-  }
 
-  results.forEach(place => {
-    const { lat: pLat, lng: pLng } = place.geometry.location;
+    // **********************************************
+    // 2. 장소 검색 및 마커 표시 함수
+    // **********************************************
+    async function searchNearbyPlaces(placeType) {
+        // 기존 마커 제거 (새로운 검색 전에)
+        placeMarkers.clearLayers();
+        document.getElementById('list').innerHTML = ''; // 리스트 초기화
 
-    // 팝업 업데이트 함수 정의
-    async function updatePopup(marker) {
-      try {
-        const res = await fetch(`${PROXY_URL}/getPrice/${encodeURIComponent(place.name)}`);
-        const data = await res.json();
+        const url = `${PROXY_URL}/places?lat=${currentLat}&lng=${currentLng}&radius=5000&keyword=${placeType}`;
+        let placesData;
 
-        const popupContent = `
-          <strong>${place.name}</strong><br>
-          주소: ${place.vicinity || '정보 없음'}<br>
-          가격: ${data.price !== null ? `$${data.price}` : '정보 없음'}<br>
-          저장 시간: ${data.timestamp ? new Date(data.timestamp).toLocaleString() : '-'}<br>
-          <input type="number" id="priceInput" class="popup-input" placeholder="가격 입력">
-          <button id="saveBtn">저장</button>
-        `;
-        marker.bindPopup(popupContent, { autoClose: false });
+        try {
+            // 주유소 검색과 동일한 프록시 URL을 사용하지만, 'keyword'를 추가하여 요청
+            placesData = await fetch(url).then(res => res.json());
+        } catch (e) {
+            alert(`주변 ${placeType} 데이터를 불러오지 못했습니다. 프록시 서버 설정을 확인하세요.`);
+            console.error(e);
+            return;
+        }
 
-        // 팝업 DOM 생성 후 버튼 이벤트 바인딩
-        marker.on('popupopen', () => {
-          const saveBtn = document.getElementById('saveBtn');
-          if (saveBtn) {
-            saveBtn.onclick = async () => {
-              const priceInput = parseFloat(document.getElementById('priceInput').value);
-              if (!isNaN(priceInput)) {
-                await fetch(`${PROXY_URL}/savePrice`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ station_name: place.name, price: priceInput })
-                });
-                await updatePopup(marker); // 팝업 갱신
-                marker.closePopup();
-                marker.openPopup();
-              } else {
-                alert("올바른 가격을 입력하세요.");
-              }
-            };
-          }
-        });
-      } catch (err) {
-        console.error(err);
-      }
-    }
-    
-    // 마커 생성 및 그룹에 추가
-    const marker = L.marker([pLat, pLng]);
-    marker.on('click', () => updatePopup(marker));
-    markers.addLayer(marker);
+        const results = placesData.results || [];
+        const listDiv = document.getElementById('list');
 
-    // 리스트 항목 생성
-    const item = document.createElement('div');
-    item.className = 'station-item';
-    item.innerHTML = `<strong>${place.name}</strong> - ${place.vicinity || '주소 없음'}`;
-    item.onclick = () => {
-      map.panTo([pLat, pLng]);
-      updatePopup(marker).then(() => marker.openPopup());
-    };
-    listDiv.appendChild(item);
+        if (results.length === 0) {
+             listDiv.innerHTML = `<p>주변에 검색된 ${placeType}가 없습니다.</p>`;
+        } else {
+             listDiv.innerHTML = `<h3>주변 ${placeType.toUpperCase()} (${results.length}개)</h3>`;
+        }
 
-    updatePopup(marker); // 초기 팝업 표시
-  });
-}
 
-// --- 드로잉 모드 토글 함수 ---
-function toggleDrawingMode() {
-  isDrawingMode = !isDrawingMode;
-  if (isDrawingMode) {
-    toggleDrawBtn.classList.add('active');
-    toggleDrawBtn.textContent = '❌ 영역 지정 취소';
-    map.dragging.disable(); // 지도 드래그 비활성화
-    map.touchZoom.disable();
-    map.doubleClickZoom.disable();
-    map.scrollWheelZoom.disable();
-    map.boxZoom.disable();
-    map.keyboard.disable();
-    map.getContainer().style.cursor = 'crosshair';
-    alert("지도를 터치(클릭)하고 드래그하여 원을 그린 후 떼면 영역이 지정됩니다.");
-  } else {
-    toggleDrawBtn.classList.remove('active');
-    toggleDrawBtn.textContent = '🔎 영역 지정 모드';
-    map.dragging.enable(); // 지도 드래그 활성화
-    map.touchZoom.enable();
-    map.doubleClickZoom.enable();
-    map.scrollWheelZoom.enable();
-    map.boxZoom.enable();
-    map.keyboard.enable();
-    map.getContainer().style.cursor = '';
-    // 영역 지정 취소 시 현재 위치 기반으로 다시 검색하도록 할 수도 있음 (선택 사항)
-    // if (currentLocation) loadAndDisplayGasStations(currentLocation.lat, currentLocation.lng, 5000);
-  }
-}
-toggleDrawBtn.addEventListener('click', toggleDrawingMode);
+        results.forEach(place => {
+            const { lat, lng } = place.geometry.location;
 
-// --- 드로잉 이벤트 핸들러 ---
-let tempCircle = null; // 드래그 중인 임시 원
-let currentLocation = null; // 현재 위치 저장
+            // 마커 생성 및 마커 그룹에 추가
+            const marker = L.marker([lat, lng]).addTo(placeMarkers);
 
-// 1. 터치/클릭 시작 (원의 중심점 설정)
-function handlePointerDown(e) {
-  if (!isDrawingMode) return;
-  startLatLng = e.latlng;
-  
-  // 임시 원 시작
-  tempCircle = L.circle(startLatLng, {
-    color: 'blue',
-    fillColor: '#007bff',
-    fillOpacity: 0.2,
-    radius: 0
-  }).addTo(map);
+            // 팝업 내용 (가격 관련 부분은 주유소에만 적용되므로 간단히 표시)
+            const popupContent = `
+                <strong>${place.name}</strong><br>
+                종류: ${placeType}<br>
+                주소: ${place.vicinity || '정보 없음'}<br>
+            `;
+            marker.bindPopup(popupContent);
 
-  // 맵 이동 시 드래그 이벤트와 충돌 방지
-  L.DomEvent.on(map.getContainer(), 'pointermove', handlePointerMove);
-  L.DomEvent.on(map.getContainer(), 'pointerup', handlePointerUp);
-}
+            // 리스트 항목 생성
+            const item = document.createElement('div');
+            item.className = 'station-item'; // 재사용
+            item.innerHTML = `<strong>${place.name}</strong> - ${place.vicinity || '주소 없음'}`;
+            item.onclick = () => {
+                map.panTo([lat, lng]);
+                marker.openPopup();
+            };
+            listDiv.appendChild(item);
+        });
+    }
 
-// 2. 터치/드래그 중 (반지름 업데이트)
-function handlePointerMove(e) {
-  if (!isDrawingMode || !startLatLng) return;
 
-  const endLatLng = map.mouseEventToLatLng(e.originalEvent);
-  const distance = startLatLng.distanceTo(endLatLng); // 미터 단위 거리 계산
+    // **********************************************
+    // 3. 초기 위치 및 주유소 검색 (기존 로직)
+    // **********************************************
 
-  // 임시 원 업데이트
-  if (tempCircle) {
-    tempCircle.setRadius(distance);
-  }
-}
+    navigator.geolocation.getCurrentPosition(async pos => {
+        currentLat = pos.coords.latitude;
+        currentLng = pos.coords.longitude;
 
-// 3. 터치/클릭 종료 (원형 영역 확정 및 검색)
-function handlePointerUp(e) {
-  if (!isDrawingMode || !startLatLng) return;
+        map.setView([currentLat, currentLng], 14);
+        L.marker([currentLat, currentLng]).addTo(map).bindPopup("현재 내 위치").openPopup();
 
-  // 이벤트 리스너 제거
-  L.DomEvent.off(map.getContainer(), 'pointermove', handlePointerMove);
-  L.DomEvent.off(map.getContainer(), 'pointerup', handlePointerUp);
+        // 기존 주유소 검색 로직
+        const url = `${PROXY_URL}/places?lat=${currentLat}&lng=${currentLng}&radius=5000`;
+        let placesData;
+        try {
+            placesData = await fetch(url).then(res => res.json());
+        } catch (e) {
+            alert("주유소 데이터를 불러오지 못했습니다.");
+            console.error(e);
+            return;
+        }
 
-  const endLatLng = map.mouseEventToLatLng(e.originalEvent);
-  const distance = startLatLng.distanceTo(endLatLng);
+        const results = placesData.results || [];
+        const listDiv = document.getElementById('list');
+        listDiv.innerHTML = '<h3>주변 주유소 검색 결과</h3>';
 
-  // 최소 반지름 설정 (너무 작은 원은 무시)
-  if (distance < 50) { 
-    if (tempCircle) map.removeLayer(tempCircle);
-    startLatLng = null;
-    return;
-  }
+        results.forEach(place => {
+            const { lat, lng } = place.geometry.location;
+            const marker = L.marker([lat, lng]).addTo(map);
 
-  // 기존 원 제거 및 새로운 원 추가
-  if (currentCircle) map.removeLayer(currentCircle);
-  currentCircle = tempCircle;
-  currentCircle.setStyle({ color: 'red', fillColor: '#dc3545', fillOpacity: 0.3 }); // 최종 원 스타일
+            // 팝업 업데이트 함수 (주유소 가격 로직 포함)
+            async function updatePopup() {
+                try {
+                    const res = await fetch(`${PROXY_URL}/getPrice/${encodeURIComponent(place.name)}`);
+                    const data = await res.json();
 
-  // 주유소 검색 실행
-  // 최대 검색 반경은 50000m (50km)로 제한
-  const searchRadius = Math.min(distance, 50000); 
-  loadAndDisplayGasStations(startLatLng.lat, startLatLng.lng, searchRadius);
+                    const popupContent = `
+                        <strong>${place.name}</strong><br>
+                        주소: ${place.vicinity || '정보 없음'}<br>
+                        가격: ${data.price !== null ? `₩${data.price.toLocaleString()}` : '정보 없음'}<br>
+                        저장 시간: ${data.timestamp ? new Date(data.timestamp).toLocaleString() : '-'}<br>
+                        <input type="number" id="priceInput" class="popup-input" placeholder="가격 입력">
+                        <button id="saveBtn">저장</button>
+                    `;
+                    marker.bindPopup(popupContent, { autoClose: false });
 
-  // 드로잉 모드 해제
-  toggleDrawingMode();
+                    marker.on('popupopen', () => {
+                        const saveBtn = document.getElementById('saveBtn');
+                        if (saveBtn) {
+                            saveBtn.onclick = async () => {
+                                const priceInput = parseFloat(document.getElementById('priceInput').value);
+                                if (!isNaN(priceInput) && priceInput > 0) {
+                                    await fetch(`${PROXY_URL}/savePrice`, {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ station_name: place.name, price: priceInput })
+                                    });
+                                    await updatePopup();
+                                    marker.closePopup();
+                                    marker.openPopup();
+                                } else {
+                                    alert("올바른 가격을 입력하세요.");
+                                }
+                            };
+                        }
+                    });
+                } catch (err) {
+                    console.error("가격 정보를 불러오거나 팝업을 업데이트하는 데 실패했습니다.", err);
+                }
+            }
 
-  startLatLng = null;
-  tempCircle = null;
-}
+            marker.on('click', () => updatePopup());
 
-// 리프렛 이벤트 바인딩
-map.on('pointerdown', handlePointerDown);
+            const item = document.createElement('div');
+            item.className = 'station-item';
+            item.innerHTML = `<strong>${place.name}</strong> - ${place.vicinity || '주소 없음'}`;
+            item.onclick = () => {
+                map.panTo([lat, lng]);
+                updatePopup().then(() => marker.openPopup());
+            };
+            listDiv.appendChild(item);
 
-// --- 초기 위치 및 데이터 로드 ---
-navigator.geolocation.getCurrentPosition(async pos => {
-  const lat = pos.coords.latitude;
-  const lng = pos.coords.longitude;
-  currentLocation = { lat, lng };
+            updatePopup();
+        });
 
-  map.setView([lat, lng], 14);
-  L.marker([lat, lng]).addTo(map).bindPopup("현재 내 위치").openPopup();
-
-  // 초기 검색 (현재 위치 기준 5000m)
-  await loadAndDisplayGasStations(lat, lng, 5000);
-
-}, err => {
-  alert("GPS 위치 정보를 가져올 수 없습니다: " + err.message);
-  // 위치 실패 시 서울 시청 기본값으로 검색 시도
-  loadAndDisplayGasStations(37.5665, 126.9780, 5000); 
-});
+    }, err => {
+        alert("GPS 위치 정보를 가져올 수 없습니다: " + err.message);
+        // GPS 실패 시에도 기본 위치에서 C/R 검색이 가능하도록 currentLat/Lng는 유지
+    });
 </script>
 
 </body>
